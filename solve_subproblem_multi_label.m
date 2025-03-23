@@ -142,7 +142,7 @@ function newL = extendLabel(curLabel, arc, costParams, dualValues)
     flightStruct.Duration = arc.flightHours;
     flightStruct.DepartureAirport = arc.departureAirport;
     flightStruct.ArrivalAirport = arc.arrivalAirport;
-    flightStruct.FlightNumber = arc.flightID; 
+    flightStruct.FlightNumber = arc.flightNumber; 
     flightStruct.DepartureTime = datetime(arc.departureTime, 'ConvertFrom', 'posixtime', 'Format', 'HH:mm'); 
     flightStruct.ArrivalTime = datetime(arc.arrivalTime, 'ConvertFrom', 'posixtime', 'Format', 'HH:mm');
 

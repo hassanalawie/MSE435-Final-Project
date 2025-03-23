@@ -65,6 +65,7 @@ function adjList = build_adjlist(M)
                 % Create feasible arc i->j
                 arc.to = j;
                 arc.flightID = i;  % Store flight ID
+                arc.flightNumber = M(i, 8).FlightNumber;
                 arc.flightHours = duration_to_hours(string(M.Duration(i)));
                 arc.departureTime = flightDepDateTime(i);
                 arc.arrivalTime   = flightArrDateTime(i);

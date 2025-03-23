@@ -15,31 +15,46 @@ function sigma = generate_sigma(all_pairings, M)
     for p = 1:numPairings
         % Extract the array of flight-legs for this pairing
         legs = all_pairings(p).Legs;
-        
-        % In some code, .Legs might be a struct array or a single struct,
-        % so standardize it into a cell array if needed.
-        if isstruct(legs)
-            legs = {legs};
+
+        % Standardize `legs` to be a struct array if it's wrapped inside a cell
+        if iscell(legs)
+            legs = legs{1};  % Extract the struct array from the cell
+        end
+
+        % Debugging for special cases
+        if p == 2513
+            disp("We are now generating sigma for generated columns");
         end
         
-        % For each flight-leg in this pairing, find the matching row in M
+        % Loop over each flight leg correctly
         for i = 1:numel(legs)
-            fltNum  = legs{i}.FlightNumber;
-            fltDate = legs{i}.Date;            % e.g. '01-Mar'
-            depT    = legs{i}.DepartureTime;   % e.g. '10:35'
-            arrT    = legs{i}.ArrivalTime;     % e.g. '11:39'
+            fltNum  = legs(i).FlightNumber;
+            fltDate = legs(i).Date;  % e.g. '01-Mar'
+
+            % Ensure DepartureTime is in 'HH:mm' format for comparison
+            if isdatetime(legs(i).DepartureTime)
+                depT = datestr(legs(i).DepartureTime, 'HH:MM');
+            else
+                depT = string(legs(i).DepartureTime);
+            end
+
+            % Ensure ArrivalTime is in 'HH:mm' format for comparison
+            if isdatetime(legs(i).ArrivalTime)
+                arrT = datestr(legs(i).ArrivalTime, 'HH:MM');
+            else
+                arrT = string(legs(i).ArrivalTime);
+            end
             
-            % Example match (expand as needed if you also need DepartureAirport, etc.)
+            % Find matching row in M
             rowIndex = find( M.FlightNumber == fltNum & ...
                              strcmp(M.Date, fltDate) & ...
-                             strcmp(M.DepartureTime, depT) & ...
-                             strcmp(M.ArrivalTime,   arrT) );
+                             strcmp(string(M.DepartureTime), depT) & ...
+                             strcmp(string(M.ArrivalTime), arrT) );
+
+            % If match found, mark it in sigma
             if ~isempty(rowIndex)
                 sigma(rowIndex, p) = 1;
             end
         end
     end
-    
-    % If you prefer a full matrix rather than sparse:
-    % sigma = full(sigma);
 end
