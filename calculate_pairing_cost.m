@@ -15,13 +15,13 @@ function totalCost = calculate_pairing_cost(P)
 %       * per diem (4$/hr),
 %       * deadhead cost (3000$ at most once),
 %       * min guarantee (5.5 hr * 45$/hr),
-%       * hotel cost (200$/night if known).
+%       * hotel cost (200$/night if known),
+%       * penalty (3000$ if first departure ≠ final arrival).
 %
 
     % Separate flight legs into daily duties.
     duties = separate_pairing_into_duties(P);
-
-
+    
     totalDutyCost = 0.0;
 
     % Loop over each duty
@@ -44,6 +44,7 @@ function totalCost = calculate_pairing_cost(P)
             costForDuty = costForDuty + 3000.0;
             usedDeadhead = true; % only once
         end
+
         if require_hotel_from_duty(duty)
             costForDuty = costForDuty + 200.0;
         end
@@ -55,6 +56,13 @@ function totalCost = calculate_pairing_cost(P)
         end
 
         totalDutyCost = totalDutyCost + costForDuty;
+    end
+
+    % === Apply penalty if pairing does NOT return to starting base ===
+    if ~isempty(P) && ~strcmp(P(1).DepartureAirport, P(end).ArrivalAirport)
+        fprintf('Penalty applied: First departure (%s) != Final arrival (%s)\n', ...
+                P(1).DepartureAirport, P(end).ArrivalAirport);
+        totalDutyCost = totalDutyCost + 3000.0;
     end
 
     % Final cost
@@ -95,7 +103,11 @@ function duties = separate_pairing_into_duties(P)
         % sum flight hours
         totalHrs = 0.0;
         for j = 1:length(dayLegs)
-            dur = duration( dayLegs(j).Duration{1}, 'InputFormat', 'hh:mm');
+            if isnumeric(dayLegs(j).Duration)
+                dur = dayLegs(j).Duration; % Use the float value directly
+            else
+                dur = duration(dayLegs(j).Duration{1}, 'InputFormat', 'hh:mm'); % Convert from string
+            end
             totalHrs = totalHrs + dur;
         end
 

@@ -41,6 +41,7 @@ costParams.minGuarantee = 5.5 * 45;  % Minimum guarantee pay per duty
 costParams.maxDailyFlight = 8;
 costParams.maxDutyDays = 4;
 costParams.minRestHours = 9;
+costParams.partialStopFraction = 0.3; % This will check only 30% of nodes
 
 % Solve the subproblem
 subproblemStartTime = tic;
@@ -49,3 +50,9 @@ fprintf("Subproblem Solved (%.2f seconds)\n", toc(subproblemStartTime));
 
 % Report total execution time
 fprintf("Total Execution Time: %.2f seconds\n", toc);
+
+all_pairings = [initial_pairings, newPairings];
+sigma = generate_sigma(all_pairings, M);
+c = [all_pairings.Cost]'; 
+[xOpt, fval, exitflag, output, dualVariables] = solve_rmp_lp(c, sigma);
+reducedCosts = c - sigma' * dualVariables;
