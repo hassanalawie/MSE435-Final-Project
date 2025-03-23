@@ -60,8 +60,6 @@ function totalCost = calculate_pairing_cost(P)
 
     % === Apply penalty if pairing does NOT return to starting base ===
     if ~isempty(P) && ~strcmp(P(1).DepartureAirport, P(end).ArrivalAirport)
-        fprintf('Penalty applied: First departure (%s) != Final arrival (%s)\n', ...
-                P(1).DepartureAirport, P(end).ArrivalAirport);
         totalDutyCost = totalDutyCost + 3000.0;
     end
 

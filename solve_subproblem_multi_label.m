@@ -1,53 +1,62 @@
 function [newPairings] = solve_subproblem_multi_label(adjList, M, dualValues, costParams)
 % SOLVE_SUBPROBLEM_MULTI_LABEL  Multi-label resource-constrained subproblem 
-% to find negative reduced cost pairings that start and end at the same base.
-%
-% This version demonstrates a simple partial/dynamic pricing approach:
-%   - We do not necessarily process all nodes in the label-setting queue.
-%   - Instead, we have a heuristic "stop fraction" that halts expansions early.
-%
-% costParams fields possibly used here:
-%   - maxDailyFlight
-%   - maxDutyDays
-%   - partialStopFraction (in range (0,1]) => fraction of 'nNodes' to process
-%     before stopping.
+% to find negative reduced cost pairings, possibly starting expansions from
+% an offset node.
 
     fprintf('Starting subproblem: Solving for new pairings...\n');
-    nNodes   = length(adjList);
-    homeBase = adjList{1}(1).departureAirport;  % Identify home base
 
-    % If user didn't specify a partialStopFraction, default to 1.0 (meaning full solve)
+    nNodes = length(adjList);
+
+    % Identify home base from node 1's first arc (as you had)
+    homeBase = adjList{1}(1).departureAirport;
+
+    % If user didn't specify partialStopFraction, default to 1.0 (full solve)
     if ~isfield(costParams,'partialStopFraction')
         costParams.partialStopFraction = 1.0;
     end
 
-    % Maximum count of unique nodes we plan to fully process
-    maxProcessed = round( nNodes * costParams.partialStopFraction );
-    maxProcessed = max(1, min(maxProcessed, nNodes)); 
-    % Ensure it's at least 1, and cannot exceed nNodes
+    % If user didn't specify offsetNodeIndex, default to 0
+    if ~isfield(costParams,'offsetNodeIndex')
+        costParams.offsetNodeIndex = 0;
+    end
 
-    % Initialize label structure
+    % Clean up offset so it doesn't exceed nNodes
+    offset = costParams.offsetNodeIndex;
+    if offset < 0
+        offset = 0;
+    end
+    startNode = 1 + offset;
+    % Wrap around if needed
+    if startNode > nNodes
+        startNode = mod(startNode - 1, nNodes) + 1;
+    end
+
+    % Figure out how many nodes to process before stopping
+    maxProcessed = round(nNodes * costParams.partialStopFraction);
+    maxProcessed = max(1, min(maxProcessed, nNodes));
+
+    % Initialize label sets
     LabelSets = cell(nNodes,1);
 
-    % Initialize first label at node 1 (SOURCE)
-    initLabel.flightLegs   = []; 
+    % Create initial label for the chosen start node
+    initLabel.flightLegs   = [];
     initLabel.dayIndex     = 1;
     initLabel.dailyFT      = 0;
     initLabel.daysUsed     = 1;
     initLabel.deadheads    = 0;
     initLabel.prevNode     = 0;
     initLabel.prevLabelIdx = 0;
-    initLabel.sumDuals     = 0;  
+    initLabel.sumDuals     = 0;
 
-    LabelSets{1} = initLabel;
-    openQueue = struct('node',1,'labelIdx',1);
-    
-    % Progress tracking variables
-    reportInterval = max(1, round(nNodes / 10));  % Ensure at least every 10%
+    LabelSets{startNode} = initLabel;
+    openQueue = struct('node',startNode,'labelIdx',1);
+
+    % Tracking
+    processedNodes = false(nNodes, 1);
     uniqueNodesProcessed = 0;
-    processedNodes = false(nNodes, 1); % Boolean array to track processed nodes
+    reportInterval = max(1, round(nNodes / 10));
 
-    % Label-setting process
+    % Label-setting partial expansions
     while ~isempty(openQueue)
         current = openQueue(end);
         openQueue(end) = [];
@@ -59,27 +68,25 @@ function [newPairings] = solve_subproblem_multi_label(adjList, M, dualValues, co
         if ~processedNodes(i)
             processedNodes(i) = true;
             uniqueNodesProcessed = uniqueNodesProcessed + 1;
-            
-            % Ensure progress never exceeds 100%
-            progress = min(100, (uniqueNodesProcessed / nNodes) * 100);
+
             if mod(uniqueNodesProcessed, reportInterval) == 0
-                fprintf('Progress: %.0f%% complete...\n', progress);
+                fprintf('Progress: %d%% complete...\n', ...
+                    round((uniqueNodesProcessed / nNodes)*100));
             end
 
-            % --- PARTIAL PRICING HEURISTIC: STOP IF WE'VE PROCESSED ENOUGH NODES ---
+            % Stopping if partialStopFraction reached
             if uniqueNodesProcessed >= maxProcessed
-                fprintf('Reached partialStopFraction: stopping label expansions early.\n');
-                % We could break out of the entire while-loop
-                break; 
+                fprintf('Reached partialStopFraction => stopping expansions.\n');
+                break;
             end
         end
 
-        % Expand label
-        for a=1:numel(adjList{i})
+        % Expand label from node i
+        for a = 1 : numel(adjList{i})
             arc = adjList{i}(a);
             newL = extendLabel(curLabel, arc, costParams, dualValues);
-
             if ~isempty(newL)
+                % Insert and do dominance
                 [keep, newSet] = purgeDominatedLabels(newL, LabelSets{arc.to}, @checkDominance);
                 if keep
                     newLabelIdx = length(newSet);
@@ -90,31 +97,33 @@ function [newPairings] = solve_subproblem_multi_label(adjList, M, dualValues, co
         end
     end
 
-    fprintf('Label-setting (partial) complete. Now finalizing pairings...\n');
+    fprintf('Label-setting done. Now finalizing pairings...\n');
 
-    % Post-processing: identify valid pairings
+    % Identify valid pairings
     newPairings = [];
-    for nodeIdx = 1:nNodes
-        labArr = LabelSets{nodeIdx};
-        for Lidx = 1:numel(labArr)
-            L = labArr(Lidx);
-            if isSameAirport(nodeIdx, L.flightLegs, homeBase) && (L.daysUsed <= costParams.maxDutyDays)
+    for nodeIdx = 1 : nNodes
+        labelsHere = LabelSets{nodeIdx};
+        for Lidx = 1 : numel(labelsHere)
+            L = labelsHere(Lidx);
+            % Must end at home base + within max duty days
+            if isSameAirport(nodeIdx, L.flightLegs, homeBase) && ...
+               (L.daysUsed <= costParams.maxDutyDays)
+
                 actualCost = calculate_pairing_cost(L.flightLegs);
-                redCost = actualCost - L.sumDuals;
-                
+                redCost    = actualCost - L.sumDuals;
                 if redCost < -1e-6
+                    % Negative reduced cost => return it
                     pairingStruct.PairingID = "SP_" + string(rand);  
-                    pairingStruct.Legs = L.flightLegs;
-                    pairingStruct.Cost = actualCost;
+                    pairingStruct.Legs      = L.flightLegs;
+                    pairingStruct.Cost      = actualCost;
                     newPairings = [newPairings, pairingStruct]; %#ok<AGROW>
                 end
             end
         end
     end
 
-    fprintf('Subproblem (partial pricing) complete: Found %d new pairings.\n', length(newPairings));
+    fprintf('Subproblem complete: Found %d new pairings.\n', length(newPairings));
 end
-
 
 %==================================================================
 function newL = extendLabel(curLabel, arc, costParams, dualValues)
@@ -129,25 +138,28 @@ function newL = extendLabel(curLabel, arc, costParams, dualValues)
 
     % Handle deadheads
     if arc.isDeadhead
-       if newL.deadheads >= 1
-           newL = []; 
-           return; 
-       else
-           newL.deadheads = newL.deadheads + 1;
-       end
+        if newL.deadheads >= 1
+            % Already used a deadhead, can't add second in same duty
+            newL = [];
+            return; 
+        else
+            newL.deadheads = newL.deadheads + 1;
+        end
     end
 
     % Append new flight leg
-    flightStruct.Date = arc.flightDate;
-    flightStruct.Duration = arc.flightHours;
-    flightStruct.DepartureAirport = arc.departureAirport;
-    flightStruct.ArrivalAirport = arc.arrivalAirport;
-    flightStruct.FlightNumber = arc.flightNumber; 
-    flightStruct.DepartureTime = datetime(arc.departureTime, 'ConvertFrom', 'posixtime', 'Format', 'HH:mm'); 
-    flightStruct.ArrivalTime = datetime(arc.arrivalTime, 'ConvertFrom', 'posixtime', 'Format', 'HH:mm');
+    flightStruct.Date              = arc.flightDate;
+    flightStruct.Duration          = arc.flightHours;
+    flightStruct.DepartureAirport  = arc.departureAirport;
+    flightStruct.ArrivalAirport    = arc.arrivalAirport;
+    flightStruct.FlightNumber      = arc.flightNumber; 
+    flightStruct.DepartureTime     = datetime(arc.departureTime, ...
+                                              'ConvertFrom','posixtime','Format','HH:mm'); 
+    flightStruct.ArrivalTime       = datetime(arc.arrivalTime, ...
+                                              'ConvertFrom','posixtime','Format','HH:mm');
 
     newL.flightLegs = [newL.flightLegs, flightStruct];
-    newL.dailyFT = newDailyFT;
+    newL.dailyFT    = newDailyFT;
 
     % Update dual variable sum
     newL.sumDuals = newL.sumDuals + dualValues(arc.flightID);
@@ -161,21 +173,22 @@ end
 %==================================================================
 function [keepIt, newSet] = purgeDominatedLabels(newLabel, labelSet, isDomFunc)
     keepIt = true;
-    
     if isempty(labelSet)
-        newSet = newLabel;  
+        newSet = newLabel;
         return;
     else
-        newSet = labelSet;  
+        newSet = labelSet;
     end
 
     i = 1;
     while i <= length(newSet)
         L = newSet(i);
         if isDomFunc(L, newLabel)
+            % L1 dominates L2 => discard newLabel
             keepIt = false;
             return;
         elseif isDomFunc(newLabel, L)
+            % newLabel dominates L => remove L
             newSet(i) = [];
         else
             i = i + 1;
@@ -183,12 +196,14 @@ function [keepIt, newSet] = purgeDominatedLabels(newLabel, labelSet, isDomFunc)
     end
 
     if keepIt
-        newSet(end+1) = newLabel;  
+        newSet(end+1) = newLabel;
     end
 end
 
 %==================================================================
 function dom = checkDominance(L1, L2)
+    % L1 dominates L2 if it is at least as good in all dimensions
+    % and strictly better in at least one dimension
     dom = (L1.dayIndex <= L2.dayIndex) && ...
           (L1.dailyFT <= L2.dailyFT) && ...
           (L1.deadheads <= L2.deadheads) && ...
